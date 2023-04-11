@@ -1,4 +1,5 @@
 import os
+import pytz
 import time
 import json
 import random
@@ -14,6 +15,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 from configparser import ConfigParser
 
 from notification import send_notification
+
+global count
+count = 1
 
 logging.basicConfig(
     filename="scheduler.log",
@@ -41,10 +45,10 @@ HUB_ADDRESS = config.get('CHROMEDRIVER', 'HUB_ADDRESS')
 
 REGEX_CONTINUE = "//a[contains(text(),'Continue')]"
 
-STEP_TIME = 1 # time between steps (interactions with forms): 0.5 seconds
-RETRY_TIME = 60 * 5 # wait time between retries/checks for available dates: 10 minutes
-EXCEPTION_TIME = 60 * 37 # wait time when an exception occurs: 30 minutes
-COOLDOWN_TIME = 60 * 57 * 3  # wait time when temporary banned (empty list): 60 minutes
+STEP_TIME = 0.7 # time between steps (interactions with forms): 0.5 seconds
+RETRY_TIME = 61 * 5 # wait time between retries/checks for available dates: 10 minutes
+EXCEPTION_TIME = 60 * 61 # wait time when an exception occurs: 30 minutes
+COOLDOWN_TIME = 60 * 61 * 3  # wait time when temporary banned (empty list): 60 minutes
 
 DATE_URL = f"https://ais.usvisa-info.com/{COUNTRY_CODE}/niv/schedule/{SCHEDULE_ID}/appointment/days/{FACILITY_ID}.json?appointments[expedite]=false"
 TIME_URL = f"https://ais.usvisa-info.com/{COUNTRY_CODE}/niv/schedule/{SCHEDULE_ID}/appointment/times/{FACILITY_ID}.json?date=%s&appointments[expedite]=false"
@@ -53,10 +57,15 @@ APPOINTMENT_URL = f"https://ais.usvisa-info.com/{COUNTRY_CODE}/niv/schedule/{SCH
 EXIT = False
 
 def get_driver():
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    
     if LOCAL_USE:
-        dr = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        dr = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     else:
-        dr = webdriver.Remote(command_executor=HUB_ADDRESS, options=webdriver.ChromeOptions())
+        dr = webdriver.Remote(command_executor=HUB_ADDRESS, options=options)
     return dr
 
 
@@ -228,49 +237,55 @@ def push_notification(dates):
 
 if __name__ == "__main__":
     login()
-    print(driver.execute_script("return navigator.userAgent;"))
     retry_count = 0
+    first_try = True
+
     while 1:
         if retry_count > 6:
             break
         try:
             print("------------------")
-            print(datetime.today())
-            print(f"Retry count: {retry_count}")
-            print()
+            # print(datetime.today())
+            vancouver_tz = pytz.timezone('America/Vancouver')
+            current_time = datetime.now(vancouver_tz)
+            print(current_time)
+            print(f"Total count: {count}")
 
-            dates = get_date()[:5]
+            dates = get_date()
+
+            if dates:
+                dates = dates[:5]
+
             if not dates:
-                msg = "List is empty"
+                msg = f"List is empty, tried: {count} times."
+                if first_try:
+                    msg = "started: " + msg
+                    first_try = False
                 send_notification(msg)
-                # EXIT = True
-            print_dates(dates)
-            date = get_available_date(dates)
-            print()
-            print(f"New date: {date}")
-            if date:
-                reschedule(date)
-                push_notification(dates)
+                time.sleep(COOLDOWN_TIME)
+            else:
+                print_dates(dates)
+                date = get_available_date(dates)
+                if date:
+                    print()
+                    print(f"New date: {date}")
+                    reschedule(date)
+                    push_notification(dates)
+                time.sleep(RETRY_TIME)
+
+            count += 1
 
             if EXIT:
                 print("------------------exit")
                 break
-
-            if not dates:
-                msg = "List is empty"
-                send_notification(msg)
-                # EXIT = True
-                time.sleep(COOLDOWN_TIME)
-            else:
-                time.sleep(RETRY_TIME)
 
         except Exception as e:
             retry_count += 1
             time.sleep(EXCEPTION_TIME)
             from traceback import format_exc
 
-            logging.exception("Program crashed!")
-            send_notification("Program crashed!" + str(format_exc()))
+            logging.exception(f"Program crashed! Tried {count} times")
+            send_notification(f"Program crashed! Tried {count} times." + str(format_exc()))
 
     if not EXIT:
         send_notification("HELP! Crashed.")
