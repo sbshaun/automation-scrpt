@@ -139,7 +139,9 @@ def get_date():
         + session
         + "'); req.send(null);return req.responseText;"
     )
-    return json.loads(NEW_GET)
+    fetched_dates = json.loads(NEW_GET)
+    logging.info(f"Fetched dates: {fetched_dates}")
+    return fetched_dates
 
 def get_time(date):
     time_url = TIME_URL % date
@@ -235,57 +237,66 @@ def push_notification(dates):
         msg = msg + d.get("date") + "; "
     send_notification(msg)
 
-if __name__ == "__main__":
-    login()
+def main_loop():
     retry_count = 0
     first_try = True
 
-    while 1:
+    while True:
         if retry_count > 6:
             break
-        try:
-            print("------------------")
-            # print(datetime.today())
-            vancouver_tz = pytz.timezone('America/Vancouver')
-            current_time = datetime.now(vancouver_tz)
-            print(current_time)
-            print(f"Total count: {count}")
 
+        try:
+            log_current_time()
             dates = get_date()
 
-            if dates:
-                dates = dates[:5]
-
-            if not dates:
-                msg = f"List is empty, tried: {count} times."
-                if first_try:
-                    msg = "started: " + msg
-                    first_try = False
-                send_notification(msg)
-                time.sleep(COOLDOWN_TIME)
+            if not dates or not isinstance(dates, list):
+                handle_empty_dates_list(first_try)
+                first_try = False
             else:
-                print_dates(dates)
-                date = get_available_date(dates)
-                if date:
-                    print()
-                    print(f"New date: {date}")
-                    reschedule(date)
-                    push_notification(dates)
-                time.sleep(RETRY_TIME)
-
-            count += 1
-
-            if EXIT:
-                print("------------------exit")
-                break
+                process_dates(dates[:3])
 
         except Exception as e:
+            handle_exception(e, retry_count)
             retry_count += 1
-            time.sleep(EXCEPTION_TIME)
-            from traceback import format_exc
-
-            logging.exception(f"Program crashed! Tried {count} times")
-            send_notification(f"Program crashed! Tried {count} times." + str(format_exc()))
 
     if not EXIT:
         send_notification("HELP! Crashed.")
+
+def log_current_time():
+    vancouver_tz = pytz.timezone('America/Vancouver')
+    current_time = datetime.now(vancouver_tz)
+    logging.info(f"Current time: {current_time}")
+
+def handle_empty_dates_list(first_try):
+    msg = f"List is empty, tried: {count} times."
+    if first_try:
+        msg = "Started: " + msg
+
+    send_notification(msg)
+    time.sleep(COOLDOWN_TIME)
+
+def process_dates(dates):
+    print_first_3_dates(dates)
+    date = get_available_date(dates)
+
+    if date:
+        print(f"\nNew date: {date}")
+        reschedule(date)
+        push_notification(dates)
+
+    time.sleep(RETRY_TIME)
+
+def print_first_3_dates(dates):
+    logging.info("Available dates:")
+    for d in dates[:3]:
+        logging.info(f"{d.get('date')} \t business_day: {d.get('business_day')}")
+    logging.info("\n")
+
+def handle_exception(exception, retry_count):
+    time.sleep(EXCEPTION_TIME)
+    logging.exception(f"Program crashed! Tried {count} times. Retried: {retry_count} times.")
+    send_notification(f"Program crashed! Tried {count} times. Retried: {retry_count} times. Exception: {exception}")
+
+if __name__ == "__main__":
+    login()
+    main_loop()
